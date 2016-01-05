@@ -1,3 +1,6 @@
 # Bioinfosummer2015_RimaChaudhuri
-Tutorial material for Bioinfosummer workshop
-This contains the .Rmd and datasets we went through during the R tutorials at BioInfoSummer 2015 in Sydney University
+R Tutorial material for Bioinfosummer 2015 workshop during BioInfoSummer at Sydney University
+
+The .Rmd file contains all R code for analysis
+The .html file is the output of the .Rmd file
+The 2 datasets we went through are included as .csv files
