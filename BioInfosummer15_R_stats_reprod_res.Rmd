@@ -1,0 +1,289 @@
+---
+title: "R, statistics and reproducible research in the omics era"
+author: "Dr. Rima Chaudhuri"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  html_document:
+    fig_caption: yes
+    highlight: pygments
+    number_sections: yes
+    theme: united
+    toc: yes
+    toc_depth: 3
+  pdf_document:
+    number_sections: yes
+    toc: yes
+    toc_depth: 3
+  word_document:
+    fig_caption: yes
+    highlight: tango
+
+---
+> ## Learning Objectives {.objectives}
+> * Data exploration of two transcriptomics datasets (human and mouse).
+> * Differential expression analysis for omics data using LIMMA.
+> * Writing your own functions for data analysis.
+> * Reproducible research - generating a report inclusive of code.
+
+## Executive summary
+We aim to identify differentially expressed (DE) genes in two separate microarray datasets from two different species with similar experimental design and compare the results. We will look into mouse muscle gene expression (GE) data post high fat feeding (HFF) and compare it to GE of mouse fed a normal chow diet. In parallel, we will practice using the same analysis steps on human muscle gene expression data of insulin resistant and insulin sensitive individuals. We will try to find the overlap between genes altered in mice under HFF and dysregulated genes in insulin resistant humans. 
+
+## Libraries to load
+
+```{r, message=FALSE}
+library(knitr)
+library(limma)
+library(reshape2)
+library(ggplot2)
+library(devtools)
+install_github("vqv/ggbiplot")
+library(ggbiplot)
+library(gplots)
+
+```
+
+## Introduction to datasets
+> * Human skeletal muscle: Insulin resistant (IR) and sensitive (IS) subjects (ArrayExpresss GSE13070, baseline data)
+> * Mouse skeletal muscle under HFF: Normal fed (Mchow) vs. after 5 (Mhi5) and 42 days (Mhi42) of HFF (ArrayExpress GSE73036)
+
+```{r, warning=FALSE, message=FALSE}
+#read in pre-processed datasets
+#Pre-processing of raw files done using affyPLM (link)
+
+#HUMAN GE data
+human = read.csv("Human.GSE13070.baseline.csv", header=T, row.names=1)
+
+#MOUSE (GE data)
+mouse = read.csv("Mouse.HFD.muscle.csv", header=T, row.names=1)
+
+```
+
+
+# Omics data exploration
+You can extract basic information about the data set using these functions, such as how many genes and samples your data set has. Along the way, you will also learn how to write a function
+```{r, warning=FALSE, message=FALSE}
+#mouse data
+tellMeMore <- function(dat){
+no.of.genes = nrow(dat) # number of rows in GEdata
+no.of.samples = ncol(dat) # number of cols in GEdata
+dimension = dim(dat) # dimension of GEdata
+samplenames = colnames(dat) # names of columns
+first.few.rownames = rownames(dat)[1:5]
+return(list(no.of.genes = no.of.genes, no.of.samples = no.of.samples, data.size = dimension, sample.names=samplenames, first.few.gene.symbols=first.few.rownames))
+}
+
+#Call function to find basic information about this dataset
+tellMeMore(mouse)
+
+#how many chow samples are in this data? 
+n = length(grep("chow", colnames(mouse)))
+n
+
+#Can you find out how many samples we have for 5d and 42d HFF?
+
+# To see a snapshot of this data
+View(mouse) 
+#or
+head(mouse)
+```
+
+### Can you find some details about the human data now?
+### Questions to consider
+1. How many genes are in the human transriptomics data?
+2. How many muscle samples are we looking at? 
+3. Are the insulin resistant and insulin sensitive groups balanced in sample size?
+ 
+# Basic quality control steps for big data sets
+```{r, warning=FALSE, message=FALSE}
+
+QC <- function(dat, data.groups){
+#boxplot
+dfm <- melt(dat)
+p = ggplot(data=dfm) + geom_boxplot(aes(x=variable,y=value, fill=as.factor(variable))) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ylab("log2(intensity)") + theme(legend.position="bottom",legend.direction="horizontal") + guides(fill=guide_legend(ncol=10, title="samples"))
+print(p)
+  
+#Principal Component Analysis 
+pca <- prcomp(t(na.omit(dat)) ,center = TRUE, scale. = TRUE) 
+g <- ggbiplot(pca, obs.scale = 1, var.scale = 1, pc.biplot = TRUE, groups = data.groups, ellipse = TRUE, 
+              labels=NULL, circle = TRUE, var.axes=FALSE )
+g <- g + scale_color_discrete(name = '')
+g <- g + theme(legend.direction = 'horizontal',legend.position = 'top') + ggtitle("PCA plot")
+print(g)
+
+#dendrogram
+distance = dist(t(dat), method="euclidean")
+HCtree = hclust(distance, method="ward.D2") 
+plot(HCtree, main = "Dendrogram")
+}
+
+data.groups.mouse = c(rep("Chow",4), rep("5days",4) , rep("42days", 4))
+QC(mouse, data.groups.mouse)
+
+```
+
+## Practice with human data
+### Questions to consider
+1. Does the data look normalized?
+2. Do the IR and IS groups clusters like they should?
+3. If samples in a group don't cluster like they should, is that a problem for further statistical analysis? Why?
+
+# Selecting our favourite genes and visualizing its expression across groups
+
+```{r,warning=FALSE, message=FALSE}
+selectgenes = function(genename, data)
+  {
+    return(grep(genename, rownames(data)))   
+  }
+
+selectgenes("CTNNB1", mouse)
+selectgenes("FTO", mouse)
+
+#Distribution of Fto gene expression across the 3 groups in mouse GE
+FTO.gene = t(mouse[selectgenes("FTO", mouse),])
+summary(FTO.gene)
+
+CTNNB1.gene = t(mouse[selectgenes("CTNNB1", mouse),])
+summary(CTNNB1.gene)
+
+#Are the gene expression of these 2 genes correlated?
+plot(CTNNB1.gene, FTO.gene)
+cor(CTNNB1.gene, FTO.gene)
+
+#Visualize GE of chosen genes across groups
+FTO.gene.df = data.frame(FTO.gene, data.groups.mouse)
+ggplot(FTO.gene.df, aes(x = data.groups.mouse, y = FTO, color=factor(data.groups.mouse))) + geom_boxplot() + geom_point(size=5)
+
+CTNNB1.gene.df = data.frame(CTNNB1.gene, data.groups.mouse)
+ggplot(CTNNB1.gene.df, aes(x = data.groups.mouse, y = CTNNB1, color=factor(data.groups.mouse))) + geom_boxplot() + geom_point(size=5)
+
+```
+
+## Practice with human data
+Hints: Create a human data group first, IR : 42 samples and IS : 17 samples
+### Questions to consider
+1. What does the expression of Fto and Ctnnb1 look like in the human data? 
+2. Do you see any marked difference between their expression in mouse vs. human data?
+3. Are the GE pattern for CTNNB1 and FTO more or less correlated in human data?
+
+
+# Statistical Analysis 
+### Welch t-tests (5d vs chow) and (42d vs chow) for selected gene
+```{r, warning=FALSE, message=FALSE}
+
+TwoSampleTT <- function(gene, grps, control, treat){
+cntl = gene[grps == control,1]
+trt = gene[grps == treat, 1]
+print(t.test(trt, cntl))
+}
+
+TwoSampleTT(CTNNB1.gene.df, data.groups.mouse, "Chow", "5days")
+TwoSampleTT(FTO.gene.df, data.groups.mouse, "Chow", "5days")
+
+```
+
+> * What does the t-test tell you when comparing Chow and 42 days for these two genes?
+
+### Linear models
+"A typical model has the form response ~ terms where response is the response/outcome (y) vector and terms (x) is a series of terms which specifies a linear predictor for response."
+
+The term "regression" originates from 19th century, where a statistician observed that children's heights tended to "regress" towards the population mean in relation to their parent's heights. We will use this simple example data to understand some concepts about regression models.
+ 
+```{r}
+galton <- read.csv("http://blog.yhathq.com/static/misc/galton.csv",
+                    header=TRUE, stringsAsFactors=FALSE)
+summary(galton)
+# representing the relationship between parents' heights (X) and children's heights (y) OR in other words child's height is the response and we are trying to predict this using parent's height 
+fit <- lm(child ~ parent, data=galton)
+summary(fit)
+coef(fit) # extract coefficients 
+qplot(galton$parent, galton$child) + geom_abline(intercept = 23.9, slop = 0.65, colour="red") # the intercept and slope values are obtained from fit
+```
+
+Now coming back to the gene expression data
+### Differential expression analysis of the entire mouse data using moderated t-test from LIMMA package
+
+```{r, warning=FALSE, message=FALSE}
+f = factor(c(rep(1,4), rep(2,4), rep(3,4)), labels = c("Chow", "day5","day42"))
+design = model.matrix(~ 0 + f)
+colnames(design) <- c("Chow", "day5","day42")
+design
+fit <- lmFit(mouse , design) # fitting data to a linear model
+contrast.matrix <- makeContrasts(day5-Chow , day42-Chow, levels=design)  # defining group comparisons
+fit2 <- contrasts.fit(fit, contrast.matrix) # convert the coefficients of the design matrix into these 2 contrasts which are to be tested equal to zero
+fit2 <- eBayes(fit2) # With a series of related parameter estimates & standard errors, eBayes computes moderated t-statistics of differential expression by empirical Bayes shrinkage of the standard errors towards a common value.
+
+DE.results.5ddHFF = topTable(fit2, coef=1, number=Inf)
+DE.results.42dHFF = topTable(fit2, coef=2, number=Inf)
+head(DE.results.5ddHFF)
+
+# What is adj.P.Val? and why do we need this?
+
+volcanoplot(fit = fit2, coef=1, highlight = 10) #visualize DE genes
+
+#let's save the top 30 DE genes post 5 days of high fat feeding
+top30 = rownames(topTable(fit2, coef=1, number=30))
+```
+
+Please note that what we are doing here is supervised clustering, for visulization purpose only.
+
+```{r, warning=FALSE, message=FALSE}
+top30 # tells you what these top 30 DE genes are
+subset = mouse[top30, data.groups.mouse %in% c("Chow", "5days")] # parse out their expression values for chow & 5d
+heatmap.2(as.matrix(subset), col=redgreen(100), scale="row", trace="none", Colv = FALSE) # visualize it
+
+# Further filtering based on fold change and multiple hypothesis testing correction method 
+top.5d = topTable(fit2, coef=1, adjust.method = "fdr", lfc=0.5)
+
+```
+
+> * Can you visualize these (to.5d) as a heatmap now?
+> * What happened to CTNNB1 and FTO when we performed moderated t-test? Are they still significant? 
+
+```{r, warning=FALSE, message=FALSE}
+DE.results.5ddHFF[selectgenes("CTNNB1", DE.results.5ddHFF),]
+DE.results.42dHFF[selectgenes("CTNNB1", DE.results.42dHFF),]
+
+DE.results.5ddHFF[selectgenes("FTO", DE.results.5ddHFF),]
+DE.results.42dHFF[selectgenes("FTO", DE.results.42dHFF),]
+```
+
+
+## Practice with human data
+### Questions to consider
+1. What are the top 100 genes that are differentially expressed between IR and IS groups?
+2. Do they overlap with the top 100 gene changes from the mouse data (at any time point)?
+Hint: use function 'intersect' 
+3. Are the fold changes of the common genes correlated? 
+4. What are the Welch Two Sample t-test results like for CTNNB1 and FTO in the human data?
+5. What happens to CTNNB1 and FTO in the human data post moderated t-test?
+6. Can you conclude anything about the difference or similarity of results between human and mouse GE data?
+
+
+## Clustering using a set of predefined genes known to be associated with obesity
+```{r, warning=FALSE, message=FALSE}
+#genes from GWAS studies known to be associated with obesity 
+ogenes = c("FLG2", "APOL1", "FTO", "AIFM1","GHRL", "AGRP", "CPE", "HTR2A", "NPY5R",
+           "ACE", "ADRB2", "ADRB3", "DRD2", "GNB3", "HTR2C", "IL6", "INS", "LDLR", "LEP", "LEPR", "LIPE",
+           "MC4R", "NR3C1", "PPARG", "RETN") 
+
+heatmap.2(na.omit(as.matrix(mouse[ogenes, ])), col=redgreen(100), scale="row", cexRow = 0.8, trace="none", Colv = FALSE)
+heatmap.2(na.omit(as.matrix(human[ogenes, ])), col=redgreen(100), scale="row", cexRow = 0.8, trace="none", Colv = FALSE)
+```
+
+## Practice with human data
+### Questions to consider
+1. Do the 'ogenes' show any particular discriminatory pattern of expression between IR and IS subjects?
+2. Are the fold changes of these changes correlated in human and mouse data (at any time point)?
+3. Can you curate some known T2D associated genes and investigate if they discriminate between IR and IS groups?
+
+
+
+# Appendix
+```{r}
+getwd()
+sessionInfo()
+
+```
+
+
+
